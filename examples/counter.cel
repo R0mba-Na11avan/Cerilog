@@ -1,0 +1,17 @@
+// counter.cel
+// A simple 8-bit counter — the "hello world" of FPGA development.
+// This is what Cerilog source looks like. It transpiles to counter.sv.
+
+module Counter(
+    input  logic        clk,
+    input  logic        rst,
+    output logic[7:0]   count
+) {
+    always(posedge clk) {
+        if (rst) {
+            count <= 0;
+        } else {
+            count <= count + 1;
+        }
+    }
+}

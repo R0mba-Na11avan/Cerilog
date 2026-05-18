@@ -1,0 +1,11 @@
+// adder.cel
+// A simple parameterized adder.
+// Shows: parameters, combinational logic, assign statements.
+
+module Adder #(WIDTH = 8) (
+    input  logic[WIDTH-1:0]  a,
+    input  logic[WIDTH-1:0]  b,
+    output logic[WIDTH:0]    sum     // one bit wider to capture carry
+) {
+    assign sum = a + b;
+}

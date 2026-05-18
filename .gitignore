@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+
+# Generated SystemVerilog (don't commit transpiler output)
+*.sv
+
+# Quartus output files
+*.qpf
+*.qsf
+*.sof
+*.pof
+*.jdi
+db/
+incremental_db/
+output_files/
