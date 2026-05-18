@@ -123,6 +123,8 @@ if (condition) {
 
 ## Case
 
+### Basic
+
 ```cerilog
 case (sel) {
     2'b00: out = a;
@@ -130,6 +132,35 @@ case (sel) {
     default: out = 0;
 }
 ```
+
+### Fallthrough
+
+Stack multiple case values with no body between them — the first one with a body executes for all of them. Same as C++ fallthrough.
+
+```cerilog
+case (opcode) {
+    4'h0:
+    4'h1:
+    4'h2: result = a + b;   // 0, 1, and 2 all fall through to here
+
+    4'h3:
+    4'h4: result = a - b;   // 3 and 4 fall through to here
+
+    default: result = 0;
+}
+```
+
+Emits as a SystemVerilog `case` with multiple values comma-separated on one item:
+
+```systemverilog
+case (opcode)
+    4'h0, 4'h1, 4'h2: result = a + b;
+    4'h3, 4'h4:        result = a - b;
+    default:           result = 0;
+endcase
+```
+
+> **Note:** Verilog/SV has no true fallthrough like C++ — it uses comma-separated values instead. Cerilog's stacked syntax is cleaner to write and compiles down to the correct SV form automatically.
 
 ---
 
