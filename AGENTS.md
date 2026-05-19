@@ -50,11 +50,14 @@ Always read `docs/language_spec.md` before making any changes to the lexer, pars
 It is the source of truth for what Cerilog syntax looks like and how it maps to SystemVerilog.
 
 Key design decisions already made:
-- **`logic`** is the universal signal type — no `wire` or `reg`
-- **`always()`** is unified: no args emits `always_comb`, any args emit `always_ff @(...)`
-- **`int`** is valid for loop counters (passes through to SV directly)
-- **Case fallthrough** uses stacked cases with no body — emits as comma-separated SV values
+- **`logic`** is the universal signal type in Cerilog source — no `wire` or `reg`
+- **Verilog target** infers `wire` vs `reg` from `driven_in_always` on Port/LocalSignal nodes
+- **`always()`** is unified: no args → `always_comb` (SV) or `always @(*)` (Verilog); args → `always_ff @(...)` (SV) or `always @(...)` (Verilog)
+- **`int`** is valid for loop counters → passes through to SV, emits as `integer` in Verilog target
+- **`#(WIDTH = 8)`** → passes through to SV, emits as `#(parameter WIDTH = 8)` in Verilog target
+- **Case fallthrough** uses stacked cases with no body — emits as comma-separated values in both targets
 - **Curly braces** map to `begin`/`end`/`endmodule` based on context
+- **Default target** is SystemVerilog; Verilog target is inferred from `.v` output extension or `--target verilog` flag
 
 ---
 
@@ -129,7 +132,8 @@ This is the ground truth for correctness. If Verilator accepts it, the emitter i
 
 ## What NOT to Do
 
-- Do not change `always_comb` / `always_ff` emit behavior — it is intentional (see language spec)
+- Do not change the `always` emit behavior — it is intentional (see language spec)
 - Do not introduce new top-level types besides `logic` and `int` without updating `language_spec.md` first
-- Do not emit `wire` or `reg` — always emit `logic`
+- Do not emit `wire` or `reg` in the SystemVerilog target — always emit `logic`
+- Do not emit `logic` in the Verilog target — infer `wire` or `reg` from `driven_in_always`
 - Do not add dependencies beyond `lark` and `pytest` without a good reason

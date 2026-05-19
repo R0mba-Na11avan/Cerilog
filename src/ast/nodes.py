@@ -71,11 +71,20 @@ class Subscript(Node):
 
 @dataclass
 class Port(Node):
-    """A module port: input/output logic[N:0] name"""
-    direction: str = ""             # "input" or "output"
-    width_high: Optional[Node] = None   # None = single bit
+    """
+    A module port: input/output logic[N:0] name
+
+    driven_in_always is set by a semantic analysis pass before code generation.
+    The Verilog emitter uses it to decide between 'wire' and 'reg':
+        input               ->  always 'wire' (inputs are never regs)
+        output, assign      ->  'wire'
+        output, always      ->  'reg'
+    """
+    direction: str = ""                  # "input" or "output"
+    width_high: Optional[Node] = None    # None = single bit
     width_low: Optional[Node] = None
     name: str = ""
+    driven_in_always: bool = False       # set during semantic analysis
 
 
 @dataclass
@@ -164,10 +173,16 @@ class Always(Node):
 
 @dataclass
 class LocalSignal(Node):
-    """A local signal declaration inside a module: logic[7:0] count;"""
+    """
+    A local signal declaration inside a module: logic[7:0] count;
+
+    driven_in_always is set by semantic analysis, same as Port.
+    Used by the Verilog emitter to decide 'wire' vs 'reg'.
+    """
     width_high: Optional[Node] = None
     width_low: Optional[Node] = None
     name: str = ""
+    driven_in_always: bool = False       # set during semantic analysis
 
 
 @dataclass
