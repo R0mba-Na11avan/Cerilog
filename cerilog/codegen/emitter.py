@@ -1,103 +1,135 @@
 """
-Cerilog Code Generator (Stage 4)
+Code generator: walks an analysed AST and prints SystemVerilog or Verilog-2005.
 
-Walks the AST and emits either SystemVerilog (.sv) or plain Verilog (.v).
-Target is selected at construction time via the Target enum.
+One emitter handles both targets; the differences are small and listed here:
 
-Verilog vs SystemVerilog differences handled here:
-    ┌─────────────────────┬──────────────────────────┬─────────────────────────┐
-    │ Cerilog             │ SystemVerilog             │ Verilog                 │
-    ├─────────────────────┼──────────────────────────┼─────────────────────────┤
-    │ logic               │ logic                     │ wire / reg (inferred)   │
-    │ always()            │ always_comb               │ always @(*)             │
-    │ always(posedge clk) │ always_ff @(posedge clk)  │ always @(posedge clk)   │
-    │ int i               │ int i                     │ integer i               │
-    │ #(WIDTH = 8)        │ #(WIDTH = 8)              │ #(parameter WIDTH = 8)  │
-    └─────────────────────┴──────────────────────────┴─────────────────────────┘
+    Cerilog                  SystemVerilog              Verilog-2005
+    -----------------------  -------------------------  ----------------------------------
+    logic x                  logic x                    wire x / reg x (driven_in_always)
+    always() { }             always_comb begin          always @(*) begin
+    always(posedge clk) { }  always_ff @(posedge clk)   always @(posedge clk)
+    for (int i...) in always for (int i = ...)          integer i; (hoisted) for (i = ...)
+    for (int i...) at module for (genvar i = ...)       genvar i; generate for (i = ...) endgenerate
+    '0 / 'x / 'z             '0 / 'x / 'z               0 / 'bx / 'bz
+    x = '1                   x = '1                     x = {8{1'b1}} (needs x's width)
+    logic mem[16]            logic mem [16]             reg mem [0:15]
 
-wire/reg inference rule (Verilog target only):
-    - input port            -> wire (inputs are never reg)
-    - output/local signal   -> reg  if driven inside an always block
-                            -> wire if driven by assign or module output
-
-Design principles:
-    - Emit readable output, not minified
-    - Each emitted line gets a source comment (e.g. // source: counter.cel:14)
-      so Quartus error messages can be traced back to your .cel file
-    - Indentation is handled by the emitter, not the AST
-
-TODO (Stage 4):
-    - Implement Emitter.emit() and all emit_* methods
-    - Add semantic analysis pass to set driven_in_always on Port/LocalSignal nodes
-    - Test Verilog output against Quartus, SV output against Verilator
+Expressions are printed as parsed. Parentheses from the source are kept as
+Paren nodes, so output grouping matches the input exactly.
 """
 
+from __future__ import annotations
+
 from enum import Enum
+from typing import Optional
+
 from cerilog.ast import nodes
+from cerilog.errors import CerilogError
 
-
-INDENT = "    "   # 4 spaces per level
+INDENT = "    "
 
 
 class Target(Enum):
     SYSTEMVERILOG = "systemverilog"
     VERILOG = "verilog"
 
+    @classmethod
+    def parse(cls, text: str) -> "Target":
+        """Accepts sv, systemverilog, v, verilog (any case)."""
+        aliases = {"sv": cls.SYSTEMVERILOG, "systemverilog": cls.SYSTEMVERILOG,
+                   "v": cls.VERILOG, "verilog": cls.VERILOG}
+        try:
+            return aliases[text.lower()]
+        except KeyError:
+            raise ValueError(f"unknown target '{text}' (use sv or v)") from None
 
-class EmitError(Exception):
-    """Raised when the emitter encounters an AST it can't handle."""
-    pass
+    @classmethod
+    def from_extension(cls, path: str) -> Optional["Target"]:
+        lower = path.lower()
+        if lower.endswith(".sv"):
+            return cls.SYSTEMVERILOG
+        if lower.endswith(".v"):
+            return cls.VERILOG
+        return None
+
+    @property
+    def extension(self) -> str:
+        return ".sv" if self is Target.SYSTEMVERILOG else ".v"
+
+    @property
+    def language(self) -> str:
+        return "SystemVerilog" if self is Target.SYSTEMVERILOG else "Verilog-2005"
+
+    @property
+    def display_name(self) -> str:
+        return "SystemVerilog (.sv)" if self is Target.SYSTEMVERILOG else "Verilog-2005 (.v)"
+
+
+class EmitError(CerilogError):
+    """A construct that has no equivalent in the selected target."""
 
 
 class Emitter:
     """
-    Walks a Cerilog AST and produces a SystemVerilog or Verilog string.
+    Walks a Cerilog AST and produces SystemVerilog or Verilog source.
 
-    Usage:
-        # SystemVerilog (default)
-        sv_code = Emitter().emit(module_node)
+        Emitter().emit(source_file)                                  # SystemVerilog
+        Emitter(target=Target.VERILOG, filename="x.cel").emit(tree)  # Verilog-2005
 
-        # Plain Verilog (for Quartus .v files, DE-10 Lite etc.)
-        v_code = Emitter(target=Target.VERILOG).emit(module_node)
+    Run cerilog.analysis.analyze() first: the Verilog target relies on the
+    driven_in_always flags it sets.
     """
 
-    def __init__(self, target: Target = Target.SYSTEMVERILOG, source_maps: bool = True):
+    def __init__(self, target: Target = Target.SYSTEMVERILOG, source_maps: bool = True,
+                 filename: Optional[str] = None):
         self.target = target
-        self.source_maps = source_maps  # include // source: file:line comments
+        self.source_maps = source_maps
+        self.filename = filename
         self._indent = 0
         self._lines: list[str] = []
+        self._decls: dict[str, nodes.Node] = {}
+        self._labels: dict[str, int] = {}
+        self._generate_depth = 0
+        self._compact_depth = 0
 
     @property
     def is_verilog(self) -> bool:
-        return self.target == Target.VERILOG
+        return self.target is Target.VERILOG
 
     @property
     def is_systemverilog(self) -> bool:
-        return self.target == Target.SYSTEMVERILOG
+        return self.target is Target.SYSTEMVERILOG
 
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
 
-    def emit(self, module: nodes.Module) -> str:
-        """
-        Entry point. Returns the full source as a string.
-        Call with a Module node from the parser.
-        """
-        # TODO: implement in Stage 4
-        raise NotImplementedError("Emitter not yet implemented — coming in Stage 4")
+    def emit(self, root: nodes.SourceFile | nodes.Module) -> str:
+        """Return the generated source for a whole file (or a single module)."""
+        modules = root.modules if isinstance(root, nodes.SourceFile) else [root]
+        self._lines = []
+        self._indent = 0
+        origin = f" from {self.filename}" if self.filename else ""
+        self._lines.append(f"// Generated by Cerilog{origin} for {self.target.language}. Do not edit.")
+        for module in modules:
+            self._lines.append("")
+            self.emit_module(module)
+        return "\n".join(self._lines) + "\n"
 
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
 
-    def _write(self, text: str, node: nodes.Node = None):
-        """Write one line at the current indentation level."""
-        indent = INDENT * self._indent
-        source_comment = ""
-        if self.source_maps and node and node.line:
-            source_comment = f"  // source: line {node.line}"
-        self._lines.append(f"{indent}{text}{source_comment}")
+    def _write(self, text: str, node: Optional[nodes.Node] = None):
+        """Write one line at the current indentation, with a source comment if enabled."""
+        if not text:
+            self._lines.append("")
+            return
+        comment = ""
+        if self.source_maps and node is not None and node.line:
+            where = f"{self.filename}:{node.line}" if self.filename else f"line {node.line}"
+            comment = f"  // source: {where}"
+        self._lines.append(f"{INDENT * self._indent}{text}{comment}")
 
     def _indent_in(self):
         self._indent += 1
@@ -105,70 +137,457 @@ class Emitter:
     def _indent_out(self):
         self._indent = max(0, self._indent - 1)
 
-    def _signal_type(self, driven_in_always: bool, direction: str = "") -> str:
-        """
-        Returns the correct type keyword for a signal.
+    def _range(self, high: Optional[nodes.Node], low: Optional[nodes.Node]) -> str:
+        if high is None:
+            return ""
+        return f"[{self._compact(high)}:{self._compact(low)}]"
 
-        SystemVerilog: always 'logic'
-        Verilog:       'wire' or 'reg' depending on how the signal is driven.
-                       Input ports are always wire in Verilog.
-        """
+    def _compact(self, node: Optional[nodes.Node]) -> str:
+        """Expression without spaces around binary operators, for ranges: [WIDTH-1:0]."""
+        self._compact_depth += 1
+        try:
+            return self.emit_expr(node)
+        finally:
+            self._compact_depth -= 1
+
+    def _net_kind(self, decl: nodes.Port | nodes.LocalSignal) -> str:
         if self.is_systemverilog:
             return "logic"
-        # Verilog target
-        if direction == "input":
+        if isinstance(decl, nodes.Port) and decl.direction != "output":
             return "wire"
-        return "reg" if driven_in_always else "wire"
+        return "reg" if decl.driven_in_always else "wire"
+
+    def _unique_label(self, var: str) -> str:
+        base = f"gen_{var}"
+        count = self._labels.get(base, 0)
+        self._labels[base] = count + 1
+        return base if count == 0 else f"{base}_{count}"
 
     # ------------------------------------------------------------------ #
-    # Node emitters (implement in Stage 4)
+    # Module
     # ------------------------------------------------------------------ #
 
-    def emit_module(self, node: nodes.Module): ...
+    def emit_module(self, node: nodes.Module):
+        self._decls = {p.name: p for p in node.ports}
+        self._labels = {}
+        self._collect_decls(node.body)
+
+        if node.parameters:
+            self._write(f"module {node.name} #(", node)
+            self._indent_in()
+            for i, param in enumerate(node.parameters):
+                comma = "," if i < len(node.parameters) - 1 else ""
+                self._write(f"parameter {param.name} = {self.emit_expr(param.default)}{comma}")
+            self._indent_out()
+            opener, opener_node = ") (" if node.ports else ") ();", None
+        else:
+            opener, opener_node = (f"module {node.name} (" if node.ports else f"module {node.name} ();"), node
+
+        self._write(opener, opener_node)
+        if node.ports:
+            self._indent_in()
+            port_lines = self._port_lines(node.ports)
+            for i, text in enumerate(port_lines):
+                comma = "," if i < len(port_lines) - 1 else ""
+                self._write(text + comma)
+            self._indent_out()
+            self._write(");")
+
+        self._indent_in()
+        if self.is_verilog:
+            self._emit_hoisted_vars(node)
+        self._emit_items(node.body)
+        self._indent_out()
+        self._write("endmodule")
+
+    _MULTILINE = (nodes.Always, nodes.GenerateFor, nodes.Instance)
+
+    def _emit_items(self, items: list[nodes.Node]):
+        """Module items, with a blank line between groups of different kinds."""
+        previous = None
+        for item in items:
+            if previous is not None and (
+                type(item) is not type(previous)
+                or isinstance(item, self._MULTILINE)
+            ):
+                self._write("")
+            self.emit_item(item)
+            previous = item
+
+    def _collect_decls(self, items: list[nodes.Node]):
+        for item in items:
+            if isinstance(item, nodes.LocalSignal):
+                self._decls[item.name] = item
+            elif isinstance(item, nodes.GenerateFor):
+                self._collect_decls(item.body)
+
+    def _port_lines(self, ports: list[nodes.Port]) -> list[str]:
+        rows = []
+        for p in ports:
+            kind = self._net_kind(p) + (" signed" if p.signed else "")
+            rows.append((p.direction, kind, self._range(p.width_high, p.width_low), p.name))
+        dir_w = max(len(r[0]) for r in rows)
+        kind_w = max(len(r[1]) for r in rows)
+        rng_w = max(len(r[2]) for r in rows)
+        lines = []
+        for direction, kind, rng, name in rows:
+            cols = [direction.ljust(dir_w), kind.ljust(kind_w)]
+            if rng_w:
+                cols.append(rng.ljust(rng_w))
+            cols.append(name)
+            lines.append(" ".join(cols))
+        return lines
 
     def emit_port(self, node: nodes.Port) -> str:
-        """
-        Emit a port declaration.
+        """Single port declaration, unaligned: 'input logic [7:0] data'."""
+        kind = self._net_kind(node) + (" signed" if node.signed else "")
+        rng = self._range(node.width_high, node.width_low)
+        return " ".join(part for part in (node.direction, kind, rng, node.name) if part)
 
-        SV:      input logic[7:0] count
-        Verilog: input wire[7:0] count   (input)
-                 output reg[7:0] count   (output driven in always)
-                 output wire[7:0] count  (output driven by assign)
-        """
-        ...
+    def _emit_hoisted_vars(self, module: nodes.Module):
+        """Verilog-2005 can't declare loop variables inside for(); declare them up front."""
+        genvars: list[str] = []
+        integers: list[str] = []
+
+        def visit_stmt(stmt):
+            match stmt:
+                case nodes.Block():
+                    for s in stmt.statements:
+                        visit_stmt(s)
+                case nodes.If():
+                    visit_stmt(stmt.then_branch)
+                    visit_stmt(stmt.else_branch)
+                case nodes.Case():
+                    for item in stmt.items:
+                        visit_stmt(item.body)
+                case nodes.For():
+                    if stmt.declares_var and stmt.var_name not in integers:
+                        integers.append(stmt.var_name)
+                    visit_stmt(stmt.body)
+
+        def visit_items(items):
+            for item in items:
+                if isinstance(item, nodes.GenerateFor):
+                    if item.var_name not in genvars:
+                        genvars.append(item.var_name)
+                    visit_items(item.body)
+                elif isinstance(item, nodes.Always):
+                    visit_stmt(item.body)
+
+        visit_items(module.body)
+        for name in genvars:
+            if name in integers:
+                raise EmitError(
+                    f"'{name}' is used as both a generate loop variable and an always-block loop "
+                    f"variable; Verilog-2005 (.v) needs one module-level declaration per name",
+                    module.line, module.col, hint="rename one of the loops' variables",
+                )
+            self._write(f"genvar {name};")
+        for name in integers:
+            self._write(f"integer {name};")
+        if genvars or integers:
+            self._write("")
+
+    # ------------------------------------------------------------------ #
+    # Module items
+    # ------------------------------------------------------------------ #
+
+    def emit_item(self, node: nodes.Node):
+        match node:
+            case nodes.LocalSignal():
+                self.emit_local_signal(node)
+            case nodes.Localparam():
+                self._write(f"localparam {node.name} = {self.emit_expr(node.value)};", node)
+            case nodes.Assign():
+                self.emit_assign(node)
+            case nodes.Always():
+                self.emit_always(node)
+            case nodes.GenerateFor():
+                self.emit_generate_for(node)
+            case nodes.Instance():
+                self.emit_instance(node)
+            case _:
+                raise EmitError(f"can't emit {type(node).__name__} at module level", node.line, node.col)
+
+    def emit_local_signal(self, node: nodes.LocalSignal):
+        kind = self._net_kind(node) + (" signed" if node.signed else "")
+        rng = self._range(node.width_high, node.width_low)
+        text = " ".join(part for part in (kind, rng, node.name) if part)
+        for dim in node.unpacked:
+            if dim.low is None and self.is_verilog:
+                # Verilog-2005 has no [SIZE] form: [16] becomes [0:15].
+                size = self._compact(dim.high)
+                last = str(int(size) - 1) if size.isdigit() else f"{size}-1"
+                text += f" [0:{last}]"
+            elif dim.low is None:
+                text += f" [{self._compact(dim.high)}]"
+            else:
+                text += f" [{self._compact(dim.high)}:{self._compact(dim.low)}]"
+        if node.init is not None:
+            text += f" = {self._rhs(nodes.Identifier(name=node.name), node.init)}"
+        self._write(text + ";", node)
+
+    def emit_assign(self, node: nodes.Assign):
+        self._write(f"assign {self.emit_expr(node.lhs)} = {self._rhs(node.lhs, node.rhs)};", node)
 
     def emit_always(self, node: nodes.Always):
         """
-        Smart emit based on target and sensitivity list.
+        node.is_sequential == False  ->  always_comb          /  always @(*)
+        node.is_sequential == True   ->  always_ff @(edges)   /  always @(edges)
+        """
+        if node.is_sequential:
+            edges = ", ".join(f"{s.edge} {self.emit_expr(s.signal)}" for s in node.sensitivity)
+            keyword = "always_ff" if self.is_systemverilog else "always"
+            header = f"{keyword} @({edges})"
+        else:
+            header = "always_comb" if self.is_systemverilog else "always @(*)"
+        self._write(f"{header} begin", node)
+        self._block_contents(node.body)
+        self._write("end")
 
-        SV,   no args:   always_comb
-        SV,   args:      always_ff @(posedge clk, ...)
-        Verilog, no args: always @(*)
-        Verilog, args:   always @(posedge clk, ...)
-        """
-        ...
+    def emit_generate_for(self, node: nodes.GenerateFor):
+        label = self._unique_label(node.var_name)
+        init = self.emit_expr(node.init)
+        rest = f"{self.emit_expr(node.condition)}; {self._step(node.step)}"
+        if self.is_systemverilog:
+            self._write(f"for (genvar {node.var_name} = {init}; {rest}) begin : {label}", node)
+        else:
+            outermost = self._generate_depth == 0
+            if outermost:
+                self._write("generate")
+                self._indent_in()
+            self._write(f"for ({node.var_name} = {init}; {rest}) begin : {label}", node)
 
-    def emit_parameter(self, node: nodes.Parameter) -> str:
-        """
-        SV:      WIDTH = 8
-        Verilog: parameter WIDTH = 8
-        """
-        ...
+        self._generate_depth += 1
+        self._indent_in()
+        self._emit_items(node.body)
+        self._indent_out()
+        self._generate_depth -= 1
+        self._write("end")
+
+        if self.is_verilog and self._generate_depth == 0:
+            self._indent_out()
+            self._write("endgenerate")
+
+    def emit_instance(self, node: nodes.Instance):
+        if node.params:
+            self._write(f"{node.module_name} #(", node)
+            self._indent_in()
+            self._connection_lines(node.params)
+            self._indent_out()
+            head, head_node = ")", None
+        else:
+            head, head_node = node.module_name, node
+
+        if not node.connections:
+            self._write(f"{head} {node.name} ();", head_node)
+            return
+        self._write(f"{head} {node.name} (", head_node)
+        self._indent_in()
+        self._connection_lines(node.connections)
+        self._indent_out()
+        self._write(");")
+
+    def _connection_lines(self, conns: list[nodes.Connection]):
+        for i, conn in enumerate(conns):
+            comma = "," if i < len(conns) - 1 else ""
+            value = self.emit_expr(conn.expr) if conn.expr is not None else ""
+            text = f".{conn.name}({value})" if conn.name is not None else value
+            self._write(text + comma)
+
+    # ------------------------------------------------------------------ #
+    # Statements
+    # ------------------------------------------------------------------ #
+
+    def _block_contents(self, stmt: Optional[nodes.Node]):
+        """Statements inside a begin/end pair, one level deeper."""
+        self._indent_in()
+        if isinstance(stmt, nodes.Block):
+            for s in stmt.statements:
+                self.emit_stmt(s)
+        elif stmt is not None:
+            self.emit_stmt(stmt)
+        self._indent_out()
+
+    def emit_stmt(self, node: nodes.Node):
+        match node:
+            case nodes.Block():
+                self.emit_block(node)
+            case nodes.If():
+                self.emit_if(node)
+            case nodes.Case():
+                self.emit_case(node)
+            case nodes.For():
+                self.emit_for(node)
+            case nodes.BlockingAssign() | nodes.NonBlockingAssign():
+                self._write(self._assignment(node), node)
+            case _:
+                raise EmitError(f"can't emit {type(node).__name__} as a statement", node.line, node.col)
+
+    def emit_block(self, node: nodes.Block):
+        self._write("begin", node)
+        self._block_contents(node)
+        self._write("end")
+
+    def emit_if(self, node: nodes.If):
+        self._write(f"if ({self.emit_expr(node.condition)}) begin", node)
+        self._block_contents(node.then_branch)
+        other = node.else_branch
+        while other is not None:
+            if isinstance(other, nodes.If):
+                self._write(f"end else if ({self.emit_expr(other.condition)}) begin", other)
+                self._block_contents(other.then_branch)
+                other = other.else_branch
+            else:
+                self._write("end else begin")
+                self._block_contents(other)
+                other = None
+        self._write("end")
+
+    def emit_case(self, node: nodes.Case):
+        self._write(f"{node.kind} ({self.emit_expr(node.subject)})", node)
+        self._indent_in()
+        labels = [
+            "default" if item.is_default else ", ".join(self.emit_expr(v) for v in item.values)
+            for item in node.items
+        ]
+        inline = [self._is_inline(item.body) for item in node.items]
+        width = max((len(l) for l, i in zip(labels, inline) if i), default=0)
+        for item, label, is_inline in zip(node.items, labels, inline):
+            body = item.body
+            if isinstance(body, nodes.Block) and len(body.statements) == 1:
+                body = body.statements[0]
+            if isinstance(body, nodes.Block) and not body.statements:
+                self._write(f"{(label + ':').ljust(width + 1)} ;", item)
+            elif is_inline:
+                self._write(f"{(label + ':').ljust(width + 1)} {self._assignment(body)}", body)
+            else:
+                self._write(f"{label}: begin", item)
+                self._block_contents(item.body)
+                self._write("end")
+        self._indent_out()
+        self._write("endcase")
+
+    @staticmethod
+    def _is_inline(body: Optional[nodes.Node]) -> bool:
+        if isinstance(body, nodes.Block):
+            if not body.statements:
+                return True
+            if len(body.statements) != 1:
+                return False
+            body = body.statements[0]
+        return isinstance(body, (nodes.BlockingAssign, nodes.NonBlockingAssign))
 
     def emit_for(self, node: nodes.For):
-        """
-        Loop variable type:
-        SV:      int i
-        Verilog: integer i
-        """
-        ...
+        init = self.emit_expr(node.init)
+        decl = "int " if node.declares_var and self.is_systemverilog else ""
+        self._write(
+            f"for ({decl}{node.var_name} = {init}; {self.emit_expr(node.condition)}; "
+            f"{self._step(node.step)}) begin",
+            node,
+        )
+        self._block_contents(node.body)
+        self._write("end")
 
-    def emit_assign(self, node: nodes.Assign): ...
-    def emit_if(self, node: nodes.If): ...
-    def emit_case(self, node: nodes.Case): ...
-    def emit_block(self, node: nodes.Block): ...
-    def emit_binary_op(self, node: nodes.BinaryOp) -> str: ...
-    def emit_unary_op(self, node: nodes.UnaryOp) -> str: ...
-    def emit_subscript(self, node: nodes.Subscript) -> str: ...
-    def emit_identifier(self, node: nodes.Identifier) -> str: ...
-    def emit_number_lit(self, node: nodes.NumberLit) -> str: ...
+    def _step(self, step: nodes.BlockingAssign) -> str:
+        return f"{self.emit_expr(step.lhs)} = {self.emit_expr(step.rhs)}"
+
+    def _assignment(self, node: nodes.BlockingAssign | nodes.NonBlockingAssign) -> str:
+        op = "<=" if isinstance(node, nodes.NonBlockingAssign) else "="
+        return f"{self.emit_expr(node.lhs)} {op} {self._rhs(node.lhs, node.rhs)};"
+
+    # ------------------------------------------------------------------ #
+    # Expressions
+    # ------------------------------------------------------------------ #
+
+    def _rhs(self, lhs: nodes.Node, rhs: nodes.Node) -> str:
+        """Right-hand side of an assignment. Lowers `x = '1` for the Verilog target."""
+        inner = rhs
+        while isinstance(inner, nodes.Paren):
+            inner = inner.inner
+        if self.is_verilog and isinstance(inner, nodes.NumberLit) and inner.raw == "'1":
+            return self._all_ones(lhs, inner)
+        return self.emit_expr(rhs)
+
+    def _all_ones(self, lhs: nodes.Node, lit: nodes.NumberLit) -> str:
+        decl = self._decls.get(lhs.name) if isinstance(lhs, nodes.Identifier) else None
+        if decl is None or getattr(decl, "unpacked", None):
+            raise self._fill_error(lit)
+        if decl.width_high is None:
+            return "1'b1"
+        high, low = self.emit_expr(decl.width_high), self.emit_expr(decl.width_low)
+        if high.isdigit() and low.isdigit():
+            return f"{{{abs(int(high) - int(low)) + 1}{{1'b1}}}}"
+        width = f"{high}+1" if low == "0" else f"({high})-({low})+1"
+        return f"{{({width}){{1'b1}}}}"
+
+    def _fill_error(self, lit: nodes.NumberLit) -> EmitError:
+        return EmitError(
+            "'1 is not available when targeting Verilog-2005 (.v) here: its width can't be worked out",
+            lit.line, lit.col,
+            hint="use '1 only as the whole right-hand side of an assignment to a declared signal, "
+                 "write the width explicitly (e.g. {8{1'b1}}), or use --target sv",
+        )
+
+    def emit_expr(self, node: Optional[nodes.Node]) -> str:
+        match node:
+            case None:
+                return ""
+            case nodes.Identifier():
+                return self.emit_identifier(node)
+            case nodes.NumberLit():
+                return self.emit_number_lit(node)
+            case nodes.BinaryOp():
+                return self.emit_binary_op(node)
+            case nodes.UnaryOp():
+                return self.emit_unary_op(node)
+            case nodes.Ternary():
+                return (f"{self.emit_expr(node.condition)} ? {self.emit_expr(node.if_true)} : "
+                        f"{self.emit_expr(node.if_false)}")
+            case nodes.Paren():
+                return f"({self.emit_expr(node.inner)})"
+            case nodes.Subscript():
+                return self.emit_subscript(node)
+            case nodes.Concat():
+                return "{" + ", ".join(self.emit_expr(p) for p in node.parts) + "}"
+            case nodes.Replicate():
+                parts = ", ".join(self.emit_expr(p) for p in node.parts)
+                return f"{{{self.emit_expr(node.count)}{{{parts}}}}}"
+            case nodes.Call():
+                if not node.args:
+                    return node.name
+                return f"{node.name}({', '.join(self.emit_expr(a) for a in node.args)})"
+        raise EmitError(f"can't emit {type(node).__name__} as an expression", node.line, node.col)
+
+    def emit_identifier(self, node: nodes.Identifier) -> str:
+        return node.name
+
+    def emit_number_lit(self, node: nodes.NumberLit) -> str:
+        if self.is_verilog and node.is_fill:
+            fill = node.raw[1].lower()
+            if fill == "0":
+                return "0"
+            if fill in "xz":
+                return f"'b{fill}"
+            raise self._fill_error(node)
+        return node.raw
+
+    def emit_binary_op(self, node: nodes.BinaryOp) -> str:
+        if self._compact_depth and node.op in ("+", "-", "*", "/"):
+            return f"{self.emit_expr(node.left)}{node.op}{self.emit_expr(node.right)}"
+        return f"{self.emit_expr(node.left)} {node.op} {self.emit_expr(node.right)}"
+
+    def emit_unary_op(self, node: nodes.UnaryOp) -> str:
+        operand = self.emit_expr(node.operand)
+        if isinstance(node.operand, nodes.UnaryOp):
+            operand = f"({operand})"      # keep "- -a" from printing as "--a"
+        return f"{node.op}{operand}"
+
+    def emit_subscript(self, node: nodes.Subscript) -> str:
+        target = self.emit_expr(node.target)
+        high = self.emit_expr(node.high)
+        if node.op is None:
+            return f"{target}[{high}]"
+        if node.op == ":":
+            return f"{target}[{high}:{self.emit_expr(node.low)}]"
+        return f"{target}[{high} {node.op} {self.emit_expr(node.low)}]"
