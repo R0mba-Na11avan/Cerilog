@@ -1,0 +1,45 @@
+// top.cel
+// Several modules in one file, wired together with instances.
+// Shows: module instantiation with parameter overrides and named port connections.
+
+module Register #(WIDTH = 8) (
+    input  logic             clk,
+    input  logic             rst,
+    input  logic[WIDTH-1:0]  d,
+    output logic[WIDTH-1:0]  q
+) {
+    always(posedge clk) {
+        if (rst) q <= '0;
+        else     q <= d;
+    }
+}
+
+module Incrementer #(WIDTH = 8) (
+    input  logic[WIDTH-1:0]  value,
+    output logic[WIDTH-1:0]  next,
+    output logic             wrapped
+) {
+    assign {wrapped, next} = value + 1;
+}
+
+module Top(
+    input  logic       clk,
+    input  logic       rst,
+    output logic[7:0]  count,
+    output logic       overflow
+) {
+    logic[7:0] next_count;
+
+    Incrementer #(.WIDTH(8)) u_inc (
+        .value(count),
+        .next(next_count),
+        .wrapped(overflow)
+    );
+
+    Register #(.WIDTH(8)) u_reg (
+        .clk(clk),
+        .rst(rst),
+        .d(next_count),
+        .q(count)
+    );
+}

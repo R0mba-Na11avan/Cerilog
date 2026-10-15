@@ -6,8 +6,14 @@ build/
 .venv/
 .pytest_cache/
 
-# Generated SystemVerilog (don't commit transpiler output)
+# Generated HDL (don't commit transpiler output), except the golden test files
 *.sv
+*.v
+!tests/golden/expected/*.sv
+!tests/golden/expected/*.v
+
+# Packaged VS Code extension
+*.vsix
 
 # Quartus output files
 *.qpf

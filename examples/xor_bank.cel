@@ -1,0 +1,12 @@
+// xor_bank.cel
+// Shows: a module-level for loop, which stamps out one assign per bit (a generate loop).
+
+module XorBank #(WIDTH = 8) (
+    input  logic[WIDTH-1:0] data,
+    input  logic[WIDTH-1:0] mask,
+    output logic[WIDTH-1:0] out
+) {
+    for (int i = 0; i < WIDTH; i++) {
+        assign out[i] = data[i] ^ mask[i];
+    }
+}

@@ -1,0 +1,46 @@
+// fifo.cel
+// A synchronous FIFO.
+// Shows: parameters, localparam, $clog2, a memory array, async reset, braceless if.
+
+module Fifo #(WIDTH = 8, DEPTH = 16) (
+    input  logic             clk,
+    input  logic             rst_n,
+    input  logic             push,
+    input  logic             pop,
+    input  logic[WIDTH-1:0]  data_in,
+    output logic[WIDTH-1:0]  data_out,
+    output logic             full,
+    output logic             empty
+) {
+    localparam AW = $clog2(DEPTH);
+
+    logic[WIDTH-1:0] mem[0:DEPTH-1];
+    logic[AW-1:0]    wr_ptr;
+    logic[AW-1:0]    rd_ptr;
+    logic[AW:0]      count;
+
+    assign full     = (count == DEPTH);
+    assign empty    = (count == 0);
+    assign data_out = mem[rd_ptr];
+
+    always(posedge clk) {
+        if (push && !full) mem[wr_ptr] <= data_in;
+    }
+
+    always(posedge clk, negedge rst_n) {
+        if (!rst_n) {
+            wr_ptr <= '0;
+            rd_ptr <= '0;
+            count  <= '0;
+        } else {
+            if (push && !full)  wr_ptr <= wr_ptr + 1;
+            if (pop  && !empty) rd_ptr <= rd_ptr + 1;
+
+            case ({push && !full, pop && !empty}) {
+                2'b10:   count <= count + 1;
+                2'b01:   count <= count - 1;
+                default: ;
+            }
+        }
+    }
+}

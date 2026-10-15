@@ -1,0 +1,15 @@
+// popcount.cel
+// Counts the 1 bits in a byte.
+// Shows: a for loop inside an always block (unrolled by the synthesis tool).
+
+module Popcount(
+    input  logic[7:0] data,
+    output logic[3:0] ones
+) {
+    always() {
+        ones = 0;
+        for (int i = 0; i < 8; i++) {
+            ones = ones + data[i];
+        }
+    }
+}
