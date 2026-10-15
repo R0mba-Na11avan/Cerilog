@@ -137,9 +137,12 @@ counter.cel:8:28: error: expected ';' before 'else'
 
 ## VS Code
 
-The extension in [`editors/vscode`](https://github.com/R0mba-Na11avan/Cerilog/blob/main/editors/vscode) adds syntax highlighting,
-error checking on save, a ▶ compile button, and a status-bar switch between
-`.sv` and `.v` output. See its [README](https://github.com/R0mba-Na11avan/Cerilog/blob/main/editors/vscode/README.md) to install it.
+Install **Cerilog** from the Extensions view (or
+`code --install-extension r0mba.cerilog`). It adds syntax highlighting, error
+checking on save, a ▶ compile button, and a status-bar switch between `.sv`
+and `.v` output. See the
+[extension README](https://github.com/R0mba-Na11avan/Cerilog/blob/main/editors/vscode/README.md)
+for settings.
 
 ## Project layout
 

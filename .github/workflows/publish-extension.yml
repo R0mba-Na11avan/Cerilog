@@ -1,0 +1,57 @@
+name: Publish VS Code extension
+
+# Runs when a GitHub Release is published, alongside the PyPI workflow.
+# The release tag must match editors/vscode/package.json's version.
+# The .vsix is always attached to the release. Publishing to a store happens
+# only when its secret is set; otherwise that step is skipped:
+#   VSCE_PAT  VS Code Marketplace (needs an Azure DevOps token). Without it,
+#             upload the attached .vsix at marketplace.visualstudio.com/manage.
+#   OVSX_PAT  Open VSX (open-vsx.org, GitHub sign-in).
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # attach the .vsix to the release
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check tag matches extension version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "VSIX=cerilog-$version.vsix" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: npx --yes @vscode/vsce@3 package --out "$VSIX"
+
+      - name: Publish to VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npx --yes @vscode/vsce@3 publish --packagePath "$VSIX"
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx@0 publish "$VSIX" --pat "$OVSX_PAT"
+
+      - name: Attach .vsix to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$VSIX" --clobber

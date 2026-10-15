@@ -2,8 +2,8 @@
   "name": "cerilog",
   "displayName": "Cerilog",
   "description": "Syntax highlighting, error checking and one-click compile for Cerilog (.cel) hardware descriptions.",
-  "version": "0.1.0",
-  "publisher": "cerilog",
+  "version": "0.1.1",
+  "publisher": "r0mba",
   "license": "MIT",
   "icon": "images/icon.png",
   "galleryBanner": {

@@ -34,8 +34,20 @@ example, Python's scripts folder isn't on PATH), set **Cerilog: Command** to
 
 ## Install
 
-**From a folder (no tools needed).** Link this folder into your extensions
-directory, then restart VS Code:
+In VS Code, open the Extensions view (Ctrl+Shift+X), search for **Cerilog**
+and click Install. Or from a terminal:
+
+```bash
+code --install-extension r0mba.cerilog
+```
+
+Each [GitHub release](https://github.com/R0mba-Na11avan/Cerilog/releases) also
+has the `.vsix` attached; install that with **Extensions → ⋯ → Install from VSIX...**.
+
+### From source
+
+To use the extension straight from a clone (edits apply on the next reload),
+link this folder into your extensions directory and restart VS Code:
 
 ```powershell
 # Windows (PowerShell), from the repository root
@@ -45,14 +57,6 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\cerilog" 
 ```bash
 # macOS / Linux
 ln -s "$PWD/editors/vscode" ~/.vscode/extensions/cerilog
-```
-
-**As a .vsix package:**
-
-```bash
-cd editors/vscode
-npx @vscode/vsce package
-code --install-extension cerilog-0.1.0.vsix
 ```
 
 To work on the extension itself, open `editors/vscode` in VS Code and press
