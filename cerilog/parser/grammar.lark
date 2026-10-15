@@ -1,0 +1,145 @@
+// Cerilog grammar (Lark, LALR).
+//
+// Terminals are defined here once and shared by the lexer (cerilog.lexer)
+// and the parser (cerilog.parser).
+
+start: module*
+
+// ---------------------------------------------------------------- modules
+
+module: "module" IDENT param_list? "(" port_list? ")" "{" module_item* "}"
+
+param_list: "#" "(" (param ("," param)*)? ")"
+param: PARAMETER? IDENT "=" expr
+
+port_list: port ("," port)* ","?
+port: direction LOGIC? SIGNED? range? IDENT
+!direction: "input" | "output" | "inout"
+
+range: "[" expr ":" expr "]"
+
+?module_item: signal_decl
+            | localparam_decl
+            | assign
+            | always
+            | gen_for
+            | instance
+
+signal_decl: LOGIC SIGNED? range? decl_item ("," decl_item)* ";"
+decl_item: IDENT unpacked_dim* ("=" expr)?
+unpacked_dim: "[" expr (":" expr)? "]"
+
+localparam_decl: "localparam" localparam_item ("," localparam_item)* ";"
+localparam_item: IDENT "=" expr
+
+assign: "assign" postfix "=" expr ";"
+
+always: ALWAYS "(" sensitivity? ")" stmt
+ALWAYS.2: /always(_comb|_ff)?\b/
+sensitivity: "*"
+           | sens_item (("," | "or") sens_item)*
+sens_item: EDGE? expr
+EDGE.2: /(posedge|negedge)\b/
+
+gen_for: "for" "(" for_init ";" expr ";" for_step ")" gen_body
+gen_body: "{" module_item* "}"
+        | module_item
+
+instance: IDENT param_override? IDENT "(" (connection ("," connection)*)? ")" ";"
+param_override: "#" "(" (connection ("," connection)*)? ")"
+connection: "." IDENT "(" expr? ")"   -> named_connection
+          | expr                      -> positional_connection
+
+// ---------------------------------------------------------------- statements
+
+?stmt: block
+     | if_stmt
+     | case_stmt
+     | for_stmt
+     | blocking_assign
+     | nonblocking_assign
+     | ";"                -> empty_stmt
+
+block: "{" stmt* "}"
+if_stmt: "if" "(" expr ")" stmt ("else" stmt)?
+case_stmt: CASE "(" expr ")" "{" case_item* "}"
+CASE.2: /casez?\b/
+case_item: case_label+ stmt
+case_label: expr ("," expr)* ":"
+          | "default" ":"      -> default_label
+
+for_stmt: "for" "(" for_init ";" expr ";" for_step ")" stmt
+for_init: LOOP_TYPE? IDENT "=" expr
+LOOP_TYPE.2: /(int|genvar|integer)\b/
+!for_step: IDENT ("++" | "--")
+         | IDENT ("+=" | "-=" | "=") expr
+
+blocking_assign: postfix "=" expr ";"
+nonblocking_assign: postfix "<=" expr ";"
+// ---------------------------------------------------------------- expressions
+// Precedence follows IEEE 1800, lowest first.
+
+?expr: ternary
+?ternary: lor
+        | lor "?" expr ":" ternary   -> ternary
+?lor: land | lor lor_op land         -> binop
+?land: bor | land land_op bor        -> binop
+?bor: bxor | bor bor_op bxor         -> binop
+?bxor: band | bxor bxor_op band      -> binop
+?band: eq | band band_op eq          -> binop
+?eq: rel | eq eq_op rel              -> binop
+?rel: shift | rel rel_op shift       -> binop
+?shift: add | shift shift_op add     -> binop
+?add: mul | add add_op mul           -> binop
+?mul: pow | mul mul_op pow           -> binop
+?pow: unary | unary pow_op unary     -> binop
+?unary: postfix | unary_op unary     -> unop
+
+!lor_op: "||"
+!land_op: "&&"
+!bor_op: "|"
+!bxor_op: "^" | "~^" | "^~"
+!band_op: "&"
+!eq_op: "==" | "!=" | "===" | "!=="
+!rel_op: "<" | "<=" | ">" | ">="
+!shift_op: "<<" | ">>" | "<<<" | ">>>"
+!add_op: "+" | "-"
+!mul_op: "*" | "/" | "%"
+!pow_op: "**"
+!unary_op: "!" | "~" | "-" | "+" | "&" | "|" | "^" | "~&" | "~|" | "~^" | "^~"
+
+?postfix: primary
+        | postfix "[" expr "]"                -> index
+        | postfix "[" expr ":" expr "]"       -> part_select
+        | postfix "[" expr PLUS_COLON expr "]"  -> indexed_select
+PLUS_COLON: "+:" | "-:"
+
+?primary: IDENT                        -> ident
+        | NUMBER                       -> number
+        | SYSNAME "(" (expr ("," expr)*)? ")"  -> call
+        | SYSNAME                      -> call
+        | "(" expr ")"                 -> paren
+        | "{" expr ("," expr)* "}"     -> concat
+        | "{" expr "{" expr ("," expr)* "}" "}"  -> replicate
+
+// ---------------------------------------------------------------- terminals
+
+LOGIC: "logic"
+SIGNED: "signed"
+PARAMETER: "parameter"
+
+IDENT: /[A-Za-z_][A-Za-z0-9_$]*/
+SYSNAME: /\$[A-Za-z_][A-Za-z0-9_$]*/
+
+// 8'hFF, 'd5, 4'sb1010, '0, '1, 42, 1_000
+NUMBER: /(\d[\d_]*)?'[sS]?[bBoOdDhH][0-9a-fA-FxXzZ?_]+/
+      | /'[01xXzZ]/
+      | /\d[\d_]*/
+
+COMMENT: /\/\/[^\n]*/
+BLOCK_COMMENT: /\/\*(.|\n)*?\*\//
+
+%import common.WS
+%ignore WS
+%ignore COMMENT
+%ignore BLOCK_COMMENT
