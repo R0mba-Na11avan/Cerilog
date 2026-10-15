@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/R0mba-Na11avan/Cerilog/main/docs/images/cerilog-logo.png">
+    <img src="https://raw.githubusercontent.com/R0mba-Na11avan/Cerilog/main/docs/images/cerilog-logo-light.png" alt="Cerilog logo" width="320">
+  </picture>
+</p>
+
 # Cerilog for VS Code
 
 Language support for Cerilog (`.cel`) files.

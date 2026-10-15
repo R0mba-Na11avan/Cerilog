@@ -5,6 +5,27 @@
   "version": "0.1.0",
   "publisher": "cerilog",
   "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/R0mba-Na11avan/Cerilog#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/R0mba-Na11avan/Cerilog.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/R0mba-Na11avan/Cerilog/issues"
+  },
+  "keywords": [
+    "verilog",
+    "systemverilog",
+    "hdl",
+    "fpga",
+    "cerilog"
+  ],
   "engines": {
     "vscode": "^1.75.0"
   },
