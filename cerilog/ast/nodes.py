@@ -1,41 +1,49 @@
 """
-Cerilog AST Node Definitions (Stage 3)
+Cerilog AST node definitions.
 
-These dataclasses represent the Abstract Syntax Tree produced by the parser.
-Every node in the tree corresponds to a syntactic construct in Cerilog.
+The parser produces these nodes, the analysis pass annotates them, and each
+target emitter walks them to print SystemVerilog or Verilog.
 
-The code generator (Stage 4) walks this tree and emits SystemVerilog.
+Every node stores the 1-indexed source line and column it came from. Emitters
+use the line for `// source: file.cel:N` comments; diagnostics use both.
 
-Node hierarchy:
-    Node                    (base)
-    ├── Module              module Foo(...) { }
-    ├── Port                input logic[7:0] data
-    ├── Always              always() { }  or  always(posedge clk) { }
-    ├── Assign              assign out = a & b
-    ├── If                  if (cond) { } else { }
-    ├── Case                case (sel) { ... }
-    ├── CaseItem            value: statement
-    ├── For                 for (int i = 0; ...) { }
-    ├── Block               { statement; statement; }
-    ├── BinaryOp            a + b, a & b, etc.
-    ├── UnaryOp             ~a, !a
-    ├── Subscript           signal[3:0]
-    ├── NumberLit           8'hFF, 4'b1010, 42
-    ├── Identifier          signal_name
-    └── Parameter           #(WIDTH=8)
+Tree shape:
+    SourceFile
+    └── Module
+        ├── Parameter              #(WIDTH = 8)
+        ├── Port                   input logic [7:0] data
+        └── body items
+            ├── LocalSignal        logic [7:0] mem [0:255] = ...;
+            ├── Localparam         localparam DEPTH = 16;
+            ├── Assign             assign out = a & b;
+            ├── Always             always(posedge clk) { ... }
+            ├── GenerateFor        for (int i = 0; ...) { module items }
+            └── Instance           Adder #(.W(8)) u_add (.a(x));
+
+    Statements (inside always):
+        Block, If, Case/CaseItem, For, BlockingAssign, NonBlockingAssign
+
+    Expressions:
+        Identifier, NumberLit, BinaryOp, UnaryOp, Ternary, Paren,
+        Subscript, Concat, Replicate, Call
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Optional
 
 
 @dataclass
 class Node:
-    """Base class for all AST nodes. Stores source location for error reporting."""
-    line: int = field(default=0, repr=False)
-    col: int = field(default=0, repr=False)
+    """Base class for all AST nodes. Stores source location."""
+    line: int = field(default=0, repr=False, compare=False)
+    col: int = field(default=0, repr=False, compare=False)
 
+
+# --------------------------------------------------------------------------- #
+# Expressions
+# --------------------------------------------------------------------------- #
 
 @dataclass
 class Identifier(Node):
@@ -44,61 +52,210 @@ class Identifier(Node):
 
 @dataclass
 class NumberLit(Node):
-    """A numeric literal, e.g. 8'hFF or 42."""
-    raw: str = ""       # original text as written
+    """A numeric literal kept exactly as written: 42, 8'hFF, 4'b10_10, '0, '1."""
+    raw: str = ""
+
+    @property
+    def is_fill(self) -> bool:
+        """True for the SystemVerilog fill literals '0, '1, 'x, 'z."""
+        return len(self.raw) == 2 and self.raw[0] == "'" and self.raw[1] in "01xXzZ"
 
 
 @dataclass
 class BinaryOp(Node):
-    op: str = ""        # "+", "-", "&", "|", "^", "==", etc.
+    op: str = ""                    # "+", "&", "==", "<<", ...
     left: Optional[Node] = None
     right: Optional[Node] = None
 
 
 @dataclass
 class UnaryOp(Node):
-    op: str = ""        # "~", "!", "-"
+    op: str = ""                    # "~", "!", "-", and reductions "&", "|", "^", "~&", ...
     operand: Optional[Node] = None
 
 
 @dataclass
-class Subscript(Node):
-    """Signal bit select or part select: signal[3] or signal[7:0]"""
-    target: Optional[Node] = None
-    high: Optional[Node] = None     # signal[high:low] or signal[index]
-    low: Optional[Node] = None      # None for single-bit select
+class Ternary(Node):
+    condition: Optional[Node] = None
+    if_true: Optional[Node] = None
+    if_false: Optional[Node] = None
 
+
+@dataclass
+class Paren(Node):
+    """Parentheses written in the source. Kept so output grouping matches the input."""
+    inner: Optional[Node] = None
+
+
+@dataclass
+class Subscript(Node):
+    """
+    Bit select, part select, indexed part select or memory index.
+
+        sig[i]          op=None   high=i     low=None
+        sig[7:0]        op=":"    high=7     low=0
+        sig[base +: 4]  op="+:"   high=base  low=4
+        sig[base -: 4]  op="-:"   high=base  low=4
+    """
+    target: Optional[Node] = None
+    high: Optional[Node] = None
+    low: Optional[Node] = None
+    op: Optional[str] = None
+
+
+@dataclass
+class Concat(Node):
+    """{a, b, c}"""
+    parts: list[Node] = field(default_factory=list)
+
+
+@dataclass
+class Replicate(Node):
+    """{count{a, b}}"""
+    count: Optional[Node] = None
+    parts: list[Node] = field(default_factory=list)
+
+
+@dataclass
+class Call(Node):
+    """System function call: $clog2(DEPTH), $signed(x). Passed through unchanged."""
+    name: str = ""                  # includes the leading '$'
+    args: list[Node] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Declarations
+# --------------------------------------------------------------------------- #
 
 @dataclass
 class Port(Node):
     """
-    A module port: input/output logic[N:0] name
+    A module port: input logic signed [7:0] data
 
-    driven_in_always is set by a semantic analysis pass before code generation.
-    The Verilog emitter uses it to decide between 'wire' and 'reg':
-        input               ->  always 'wire' (inputs are never regs)
-        output, assign      ->  'wire'
-        output, always      ->  'reg'
+    driven_in_always is set by the analysis pass. The Verilog emitter uses it
+    to pick 'output reg' over 'output wire'.
     """
-    direction: str = ""                  # "input" or "output"
-    width_high: Optional[Node] = None    # None = single bit
+    direction: str = ""             # "input", "output" or "inout"
+    signed: bool = False
+    width_high: Optional[Node] = None   # None = single bit
     width_low: Optional[Node] = None
     name: str = ""
-    driven_in_always: bool = False       # set during semantic analysis
+    driven_in_always: bool = False
 
 
 @dataclass
 class Parameter(Node):
-    """A module parameter: #(NAME = default_value)"""
+    """A module parameter: #(NAME = default)"""
     name: str = ""
     default: Optional[Node] = None
 
 
 @dataclass
+class Localparam(Node):
+    """localparam NAME = value;"""
+    name: str = ""
+    value: Optional[Node] = None
+
+
+@dataclass
+class UnpackedDim(Node):
+    """One memory dimension: [0:255] (high=0, low=255) or [256] (high=256, low=None)."""
+    high: Optional[Node] = None
+    low: Optional[Node] = None
+
+
+@dataclass
+class LocalSignal(Node):
+    """
+    A signal declared inside a module: logic signed [7:0] mem [0:255] = init;
+
+    driven_in_always is set by the analysis pass. The Verilog emitter uses it
+    to pick 'reg' over 'wire'.
+    """
+    signed: bool = False
+    width_high: Optional[Node] = None
+    width_low: Optional[Node] = None
+    name: str = ""
+    unpacked: list[UnpackedDim] = field(default_factory=list)
+    init: Optional[Node] = None
+    driven_in_always: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# Statements
+# --------------------------------------------------------------------------- #
+
+@dataclass
 class Block(Node):
-    """A sequence of statements inside { }"""
+    """A sequence of statements inside { }."""
     statements: list[Node] = field(default_factory=list)
 
+
+@dataclass
+class BlockingAssign(Node):
+    """lhs = rhs;"""
+    lhs: Optional[Node] = None
+    rhs: Optional[Node] = None
+
+
+@dataclass
+class NonBlockingAssign(Node):
+    """lhs <= rhs;"""
+    lhs: Optional[Node] = None
+    rhs: Optional[Node] = None
+
+
+@dataclass
+class If(Node):
+    condition: Optional[Node] = None
+    then_branch: Optional[Node] = None   # any statement
+    else_branch: Optional[Node] = None   # any statement (an If for else-if), or None
+
+
+@dataclass
+class CaseItem(Node):
+    """
+    One case arm. Stacked labels (C-style fallthrough) are merged into values:
+
+        4'h0:
+        4'h1: result = a;    ->  CaseItem(values=[4'h0, 4'h1], body=...)
+
+    values == [] means the default arm.
+    """
+    values: list[Node] = field(default_factory=list)
+    body: Optional[Node] = None
+
+    @property
+    def is_default(self) -> bool:
+        return not self.values
+
+
+@dataclass
+class Case(Node):
+    kind: str = "case"              # "case" or "casez"
+    subject: Optional[Node] = None
+    items: list[CaseItem] = field(default_factory=list)
+
+
+@dataclass
+class For(Node):
+    """
+    Procedural for loop inside an always block.
+
+    declares_var is True when the loop declares its own counter: for (int i = 0; ...).
+    step is normalised to an assignment: i++ becomes i = i + 1.
+    """
+    var_name: str = ""
+    declares_var: bool = False
+    init: Optional[Node] = None
+    condition: Optional[Node] = None
+    step: Optional[BlockingAssign] = None
+    body: Optional[Node] = None
+
+
+# --------------------------------------------------------------------------- #
+# Module items
+# --------------------------------------------------------------------------- #
 
 @dataclass
 class Assign(Node):
@@ -108,87 +265,98 @@ class Assign(Node):
 
 
 @dataclass
-class NonBlockingAssign(Node):
-    """Non-blocking assignment inside always_ff: lhs <= rhs;"""
-    lhs: Optional[Node] = None
-    rhs: Optional[Node] = None
-
-
-@dataclass
-class BlockingAssign(Node):
-    """Blocking assignment: lhs = rhs;"""
-    lhs: Optional[Node] = None
-    rhs: Optional[Node] = None
-
-
-@dataclass
-class If(Node):
-    condition: Optional[Node] = None
-    then_block: Optional[Block] = None
-    else_block: Optional[Node] = None   # Block or another If (else if)
-
-
-@dataclass
-class CaseItem(Node):
-    value: Optional[Node] = None    # None = default
-    body: Optional[Node] = None
-
-
-@dataclass
-class Case(Node):
-    subject: Optional[Node] = None
-    items: list[CaseItem] = field(default_factory=list)
-
-
-@dataclass
-class For(Node):
-    init: Optional[Node] = None
-    condition: Optional[Node] = None
-    step: Optional[Node] = None
-    body: Optional[Block] = None
+class Sensitivity(Node):
+    """One entry of an always sensitivity list: posedge clk"""
+    edge: str = ""                  # "posedge" or "negedge"
+    signal: Optional[Node] = None
 
 
 @dataclass
 class Always(Node):
     """
-    Unified always block. Cerilog syntax: always(sensitivity_list) { }
+    Unified always block.
 
-    Emits differently based on sensitivity list:
-        always()                ->  always_comb
-        always(posedge clk)     ->  always_ff @(posedge clk)
-        always(posedge clk,
-               posedge rst)     ->  always_ff @(posedge clk, posedge rst)
+        always() { }                  ->  always_comb         /  always @(*)
+        always(posedge clk) { }       ->  always_ff @(...)    /  always @(...)
 
-    sensitivity is an empty list for combinational blocks.
-    Each entry is a string like "posedge clk" or "negedge rst".
+    sensitivity is empty for combinational blocks.
     """
-    sensitivity: list[str] = field(default_factory=list)
+    sensitivity: list[Sensitivity] = field(default_factory=list)
     body: Optional[Block] = None
 
     @property
     def is_sequential(self) -> bool:
-        """True if this block has a sensitivity list (flip-flop). False = combinational."""
+        """True if this block has a sensitivity list (flip-flops)."""
         return len(self.sensitivity) > 0
 
 
 @dataclass
-class LocalSignal(Node):
+class GenerateFor(Node):
     """
-    A local signal declaration inside a module: logic[7:0] count;
+    Module-level for loop: stamps out copies of the module items in its body.
+    The loop variable becomes a genvar in both targets.
+    """
+    var_name: str = ""
+    init: Optional[Node] = None
+    condition: Optional[Node] = None
+    step: Optional[BlockingAssign] = None
+    body: list[Node] = field(default_factory=list)
 
-    driven_in_always is set by semantic analysis, same as Port.
-    Used by the Verilog emitter to decide 'wire' vs 'reg'.
-    """
-    width_high: Optional[Node] = None
-    width_low: Optional[Node] = None
+
+@dataclass
+class Connection(Node):
+    """Instance port or parameter connection: .name(expr), or positional when name is None."""
+    name: Optional[str] = None
+    expr: Optional[Node] = None     # None for an explicitly unconnected port: .b()
+
+
+@dataclass
+class Instance(Node):
+    """Module instantiation: Adder #(.WIDTH(8)) u_add (.a(x), .sum(s));"""
+    module_name: str = ""
     name: str = ""
-    driven_in_always: bool = False       # set during semantic analysis
+    params: list[Connection] = field(default_factory=list)
+    connections: list[Connection] = field(default_factory=list)
 
 
 @dataclass
 class Module(Node):
-    """Top-level module declaration."""
     name: str = ""
     parameters: list[Parameter] = field(default_factory=list)
     ports: list[Port] = field(default_factory=list)
     body: list[Node] = field(default_factory=list)
+
+
+@dataclass
+class SourceFile(Node):
+    """Root node: every module in one .cel file."""
+    modules: list[Module] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Debug output
+# --------------------------------------------------------------------------- #
+
+def dump(node, indent: int = 0) -> str:
+    """Readable multi-line dump of an AST, used by `cerilog --ast`."""
+    pad = "  " * indent
+    if isinstance(node, list):
+        if not node:
+            return "[]"
+        inner = "\n".join(f"{pad}  - {dump(item, indent + 2).lstrip()}" for item in node)
+        return "\n" + inner
+    if not isinstance(node, Node):
+        return repr(node)
+
+    fields = [
+        (name, value)
+        for name, value in vars(node).items()
+        if name not in ("line", "col") and value not in (None, [], False, "")
+    ]
+    header = f"{pad}{type(node).__name__} @{node.line}:{node.col}"
+    if not fields:
+        return header
+    lines = [header]
+    for name, value in fields:
+        lines.append(f"{pad}  {name}: {dump(value, indent + 2).lstrip(' ')}")
+    return "\n".join(lines)
