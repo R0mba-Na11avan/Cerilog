@@ -1,0 +1,153 @@
+{
+  "name": "cerilog",
+  "displayName": "Cerilog",
+  "description": "Syntax highlighting, error checking and one-click compile for Cerilog (.cel) hardware descriptions.",
+  "version": "0.1.0",
+  "publisher": "cerilog",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "cerilog",
+        "aliases": [
+          "Cerilog",
+          "cerilog"
+        ],
+        "extensions": [
+          ".cel"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cerilog",
+        "scopeName": "source.cerilog",
+        "path": "./syntaxes/cerilog.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Cerilog",
+      "properties": {
+        "cerilog.target": {
+          "type": "string",
+          "enum": [
+            "sv",
+            "v"
+          ],
+          "enumDescriptions": [
+            "SystemVerilog (.sv)",
+            "Verilog-2005 (.v)"
+          ],
+          "default": "sv",
+          "description": "Output language used by the compile button and by check-on-save."
+        },
+        "cerilog.outDir": {
+          "type": "string",
+          "default": "",
+          "description": "Folder for compiled output. Empty writes next to the .cel file; a relative path is resolved against the workspace folder."
+        },
+        "cerilog.command": {
+          "type": "string",
+          "default": "cerilog",
+          "description": "Command that runs the Cerilog compiler, e.g. \"cerilog\" or \"python -m cerilog\"."
+        },
+        "cerilog.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check .cel files for errors every time they are saved."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "cerilog.compile",
+        "title": "Compile",
+        "category": "Cerilog",
+        "icon": "$(play)"
+      },
+      {
+        "command": "cerilog.compileSv",
+        "title": "Compile to SystemVerilog (.sv)",
+        "category": "Cerilog"
+      },
+      {
+        "command": "cerilog.compileV",
+        "title": "Compile to Verilog (.v)",
+        "category": "Cerilog"
+      },
+      {
+        "command": "cerilog.selectTarget",
+        "title": "Select Output Target",
+        "category": "Cerilog"
+      },
+      {
+        "command": "cerilog.check",
+        "title": "Check Current File",
+        "category": "Cerilog"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "cerilog.compileAs",
+        "label": "Compile as...",
+        "icon": "$(chevron-down)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cerilog.compile",
+          "when": "resourceLangId == cerilog",
+          "group": "navigation@1"
+        },
+        {
+          "submenu": "cerilog.compileAs",
+          "when": "resourceLangId == cerilog",
+          "group": "navigation@2"
+        }
+      ],
+      "cerilog.compileAs": [
+        {
+          "command": "cerilog.compileSv",
+          "group": "1_compile@1"
+        },
+        {
+          "command": "cerilog.compileV",
+          "group": "1_compile@2"
+        },
+        {
+          "command": "cerilog.selectTarget",
+          "group": "2_target@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cerilog.compile",
+          "when": "editorLangId == cerilog"
+        },
+        {
+          "command": "cerilog.compileSv",
+          "when": "editorLangId == cerilog"
+        },
+        {
+          "command": "cerilog.compileV",
+          "when": "editorLangId == cerilog"
+        },
+        {
+          "command": "cerilog.check",
+          "when": "editorLangId == cerilog"
+        }
+      ]
+    }
+  }
+}
