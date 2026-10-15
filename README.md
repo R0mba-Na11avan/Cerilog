@@ -81,20 +81,26 @@ which tie tool errors back to your source.)
 - VS Code extension: highlighting, error squiggles on save, a ▶ compile
   button and an `.sv`/`.v` target picker
 
-The full language is described in [`docs/language_spec.md`](docs/language_spec.md).
+The full language is described in [`docs/language_spec.md`](https://github.com/R0mba-Na11avan/Cerilog/blob/main/docs/language_spec.md).
 
 ## Install
 
 Requires Python 3.10+.
 
 ```bash
+pip install cerilog
+```
+
+This installs the `cerilog` command and its one dependency, the `lark`
+parser library.
+
+To work on Cerilog itself:
+
+```bash
 git clone https://github.com/R0mba-Na11avan/Cerilog.git
 cd Cerilog
 pip install -e ".[dev]"
 ```
-
-This installs the `cerilog` command and the `lark` parser library. Without
-installing, run `python -m cerilog` from the repository root.
 
 ## Usage
 
@@ -124,9 +130,9 @@ counter.cel:8:28: error: expected ';' before 'else'
 
 ## VS Code
 
-The extension in [`editors/vscode`](editors/vscode) adds syntax highlighting,
+The extension in [`editors/vscode`](https://github.com/R0mba-Na11avan/Cerilog/blob/main/editors/vscode) adds syntax highlighting,
 error checking on save, a ▶ compile button, and a status-bar switch between
-`.sv` and `.v` output. See its [README](editors/vscode/README.md) to install it.
+`.sv` and `.v` output. See its [README](https://github.com/R0mba-Na11avan/Cerilog/blob/main/editors/vscode/README.md) to install it.
 
 ## Project layout
 

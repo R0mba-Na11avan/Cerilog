@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,11 +7,28 @@ name = "cerilog"
 version = "0.1.0"
 description = "A C-flavored HDL that transpiles to SystemVerilog or Verilog-2005"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "R0mba-Na11avan" }]
+keywords = ["verilog", "systemverilog", "hdl", "fpga", "transpiler"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: System :: Hardware",
+]
 requires-python = ">=3.10"
 dependencies = [
     "lark>=1.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/R0mba-Na11avan/Cerilog"
+Documentation = "https://github.com/R0mba-Na11avan/Cerilog/blob/main/docs/language_spec.md"
+Issues = "https://github.com/R0mba-Na11avan/Cerilog/issues"
 
 [project.optional-dependencies]
 dev = [

@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Verilator lints the generated .sv/.v; tests/lint is skipped where it's missing.
+      - name: Install Verilator
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y verilator
+
+      - name: Install Cerilog
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -rs

@@ -35,7 +35,7 @@ def test_verilator_accepts_output(example: Path, target: Target, tmp_path: Path)
     out.write_text(result.code, encoding="utf-8")
 
     proc = subprocess.run(
-        [VERILATOR, "--lint-only", "-Wno-fatal", "-Wno-MULTITOP", "--language", LANGUAGE[target], str(out)],
+        [VERILATOR, "--lint-only", "-Wno-fatal", "-Wno-MULTITOP", "--default-language", LANGUAGE[target], str(out)],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr

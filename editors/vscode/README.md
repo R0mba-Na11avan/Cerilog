@@ -15,15 +15,15 @@ Language support for Cerilog (`.cel`) files.
 
 ## Requirements
 
-The Cerilog compiler must be runnable. From the repository root:
+The extension runs the Cerilog compiler, so install it first:
 
 ```bash
-pip install -e .
+pip install cerilog
 ```
 
-That puts a `cerilog` command on your PATH. If you'd rather not install it,
-set **Cerilog: Command** to `python -m cerilog` and open the repository folder
-as your workspace.
+That puts a `cerilog` command on your PATH. If `cerilog` isn't found (for
+example, Python's scripts folder isn't on PATH), set **Cerilog: Command** to
+`python -m cerilog`.
 
 ## Install
 
