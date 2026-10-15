@@ -6,7 +6,7 @@ Run with: python -m pytest tests/lexer/
 
 import pytest
 
-# from src.lexer.lexer import Lexer, Token, LexError
+# from cerilog.lexer.lexer import Lexer, Token, LexError
 
 
 # Uncomment and fill in as you implement the lexer in Stage 2.

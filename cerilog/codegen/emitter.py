@@ -33,7 +33,7 @@ TODO (Stage 4):
 """
 
 from enum import Enum
-from src.ast import nodes
+from cerilog.ast import nodes
 
 
 INDENT = "    "   # 4 spaces per level

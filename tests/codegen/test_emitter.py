@@ -9,8 +9,8 @@ Don't rely on the parser here — test the emitter in isolation.
 
 import pytest
 
-# from src.ast.nodes import Module, Port, AlwaysFF, Block, If, NonBlockingAssign, Identifier, NumberLit
-# from src.codegen.emitter import Emitter
+# from cerilog.ast.nodes import Module, Port, AlwaysFF, Block, If, NonBlockingAssign, Identifier, NumberLit
+# from cerilog.codegen.emitter import Emitter
 
 
 # Uncomment and fill in as you implement the emitter in Stage 4.

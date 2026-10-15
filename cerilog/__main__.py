@@ -65,21 +65,21 @@ def main():
     source = input_path.read_text()
 
     # --- Stage 2: Lex ---
-    # from src.lexer.lexer import Lexer
+    # from cerilog.lexer.lexer import Lexer
     # tokens = Lexer().tokenize(source)
     # if args.tokens:
     #     for tok in tokens: print(tok)
     #     return
 
     # --- Stage 3: Parse ---
-    # from src.parser.parser import Parser
+    # from cerilog.parser.parser import Parser
     # tree = Parser().parse(source)
     # if args.ast:
     #     print(tree.pretty())
     #     return
 
     # --- Stage 4: Code gen ---
-    # from src.codegen.emitter import Emitter, Target
+    # from cerilog.codegen.emitter import Emitter, Target
     # code = Emitter(target=Target(target)).emit(tree)
 
     # --- Output ---

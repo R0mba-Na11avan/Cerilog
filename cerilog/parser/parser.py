@@ -11,7 +11,7 @@ TODO (Stage 3):
 """
 
 from pathlib import Path
-from src.ast.nodes import Module
+from cerilog.ast.nodes import Module
 
 
 GRAMMAR_PATH = Path(__file__).parent / "grammar.lark"

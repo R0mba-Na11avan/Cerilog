@@ -6,8 +6,8 @@ Run with: python -m pytest tests/parser/
 
 import pytest
 
-# from src.parser.parser import Parser, ParseError
-# from src.ast.nodes import Module, Port, AlwaysFF
+# from cerilog.parser.parser import Parser, ParseError
+# from cerilog.ast.nodes import Module, Port, AlwaysFF
 
 
 # Uncomment and fill in as you implement the parser in Stage 3.
